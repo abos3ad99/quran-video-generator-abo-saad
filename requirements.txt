@@ -1,0 +1,6 @@
+
+Flask
+moviepy
+requests
+arabic_reshaper
+python-bidi
