@@ -1,39 +1,54 @@
-# كود من كتابة: أبو سعد عبدالرحمن المصلوخي
-import os
-from gtts import gTTS
+
+import streamlit as st
 from moviepy.editor import *
+from PIL import Image, ImageDraw, ImageFont
+import requests
+import numpy as np
 
-# وظيفة لإنشاء الصوت من النص
-def create_audio(text, output_file="audio.mp3"):
-    tts = gTTS(text, lang="ar")
-    tts.save(output_file)
-    return output_file
+st.title("تطبيق لتوليد فيديوهات بالآيات القرآنية")
 
-# وظيفة لإنشاء الفيديو
-def create_video(quran_text, background_video, output_file="final_video.mp4"):
-    # إنشاء ملف الصوت
-    audio_file = create_audio(quran_text)
+# إدخال النصوص وروابط الملفات
+quranic_text = st.text_input("أدخل الآية القرآنية:", "إِنَّ اللَّهَ مَعَ الصَّابِرِينَ")
+video_url = st.text_input("رابط فيديو الخلفية:", "https://samplelib.com/lib/preview/mp4/sample-5s.mp4")
+audio_url = st.text_input("رابط صوت التلاوة:", "https://download.quranicaudio.com/quran/mishaari_raashid_al_3afaasee/001.mp3")
 
-    # تحميل فيديو الخلفية
-    video = VideoFileClip(background_video)
+if st.button("توليد الفيديو"):
+    try:
+        # تحميل الفيديو والصوت
+        video_response = requests.get(video_url, stream=True)
+        with open("background_video.mp4", "wb") as f:
+            f.write(video_response.content)
 
-    # إنشاء النص وإضافته للفيديو
-    txt_clip = TextClip(quran_text, fontsize=70, color='white', font="Arial", bg_color="black")
-    txt_clip = txt_clip.set_position('center').set_duration(video.duration)
+        audio_response = requests.get(audio_url)
+        with open("quran_recitation.mp3", "wb") as f:
+            f.write(audio_response.content)
 
-    # تحميل الصوت
-    audio = AudioFileClip(audio_file)
+        # إعداد النصوص
+        font_url = "https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf"
+        font_response = requests.get(font_url)
+        with open("Amiri-Regular.ttf", "wb") as f:
+            f.write(font_response.content)
+        font = ImageFont.truetype("Amiri-Regular.ttf", size=80)
 
-    # دمج الفيديو والنص والصوت
-    final_video = CompositeVideoClip([video, txt_clip]).set_audio(audio)
+        def create_text_overlay(text, font, size):
+            overlay = Image.new("RGBA", size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(overlay)
+            text_bbox = draw.textbbox((0, 0), text, font=font)
+            text_width, text_height = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
+            x = (size[0] - text_width) // 2
+            y = (size[1] - text_height) // 2
+            draw.text((x, y), text, font=font, fill="white")
+            return np.array(overlay)
 
-    # تصدير الفيديو النهائي
-    final_video.write_videofile(output_file, fps=24, codec="libx264")
-    return output_file
+        video_clip = VideoFileClip("background_video.mp4")
+        text_overlay = create_text_overlay(quranic_text, font, video_clip.size)
+        text_clip = ImageClip(text_overlay).set_duration(video_clip.duration)
 
-# النص القرآني
-quran_text = "إِنَّ مَعَ الْعُسْرِ يُسْرًا"
-background_video = "background.mp4"  # يجب رفع ملف الخلفية مع الكود
+        final_video = CompositeVideoClip([video_clip, text_clip])
+        final_video = final_video.set_audio(AudioFileClip("quran_recitation.mp3"))
+        final_video.write_videofile("final_video_with_audio.mp4", fps=24)
 
-# إنشاء الفيديو النهائي
-create_video(quran_text, background_video)
+        st.success("تم إنشاء الفيديو بنجاح!")
+        st.video("final_video_with_audio.mp4")
+    except Exception as e:
+        st.error(f"حدث خطأ: {e}")

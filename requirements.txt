@@ -1,6 +1,6 @@
 
-Flask
+streamlit
 moviepy
+pillow
 requests
-arabic_reshaper
-python-bidi
+numpy
