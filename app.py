@@ -1,54 +1,105 @@
+import logging
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor
+import yt_dlp
+import os
+from flask import Flask
+from threading import Thread
 
-import streamlit as st
-from moviepy.editor import *
-from PIL import Image, ImageDraw, ImageFont
-import requests
-import numpy as np
+# إعدادات البوت
+API_TOKEN = "7613632266:AAF_ixgcRdl_jvzY8dY_aODz4RkD3576meY"
 
-st.title("تطبيق لتوليد فيديوهات بالآيات القرآنية")
+# إعداد تسجيل الأخطاء
+logging.basicConfig(level=logging.INFO)
 
-# إدخال النصوص وروابط الملفات
-quranic_text = st.text_input("أدخل الآية القرآنية:", "إِنَّ اللَّهَ مَعَ الصَّابِرِينَ")
-video_url = st.text_input("رابط فيديو الخلفية:", "https://samplelib.com/lib/preview/mp4/sample-5s.mp4")
-audio_url = st.text_input("رابط صوت التلاوة:", "https://download.quranicaudio.com/quran/mishaari_raashid_al_3afaasee/001.mp3")
+# إنشاء البوت والموزع
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
 
-if st.button("توليد الفيديو"):
+# إعداد Flask للحفاظ على النشاط
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "البوت يعمل الآن بشكل دائم!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# مسار التخزين المؤقت
+DOWNLOAD_PATH = "downloads"
+
+# التحقق من وجود مجلد التنزيل
+if not os.path.exists(DOWNLOAD_PATH):
+    os.makedirs(DOWNLOAD_PATH)
+
+# إعداد yt-dlp
+ydl_opts = {
+    'outtmpl': f'{DOWNLOAD_PATH}/%(title)s.%(ext)s',
+    'format': 'best',
+    'quiet': True,
+    'no_warnings': True,
+}
+
+# أوامر البدء
+@dp.message_handler(commands=['start', 'help'])
+async def send_welcome(message: types.Message):
+    await message.reply(
+        "👋 مرحبًا! أرسل لي رابط فيديو من YouTube, Twitter, أو Instagram وسأقوم بتنزيله لك.\n"
+        "إذا كنت تريد تحويل الفيديو إلى صوت، أرسل الرابط بصيغة: audio:<الرابط>"
+    )
+
+# التعامل مع الروابط
+@dp.message_handler()
+async def download_video(message: types.Message):
+    url = message.text.strip()
+
+    # التحقق من وجود كلمة "audio:" لتحويل الفيديو إلى صوت
+    is_audio = url.startswith("audio:")
+    if is_audio:
+        url = url.replace("audio:", "").strip()
+
+    await message.reply("⏳ جاري معالجة الرابط، انتظر قليلاً...")
+
     try:
-        # تحميل الفيديو والصوت
-        video_response = requests.get(video_url, stream=True)
-        with open("background_video.mp4", "wb") as f:
-            f.write(video_response.content)
+        # تحميل الفيديو أو الصوت باستخدام yt-dlp
+        options = ydl_opts.copy()
+        if is_audio:
+            options['format'] = 'bestaudio'
+            options['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }]
 
-        audio_response = requests.get(audio_url)
-        with open("quran_recitation.mp3", "wb") as f:
-            f.write(audio_response.content)
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info_dict = ydl.extract_info(url, download=True)
+            file_path = ydl.prepare_filename(info_dict)
 
-        # إعداد النصوص
-        font_url = "https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf"
-        font_response = requests.get(font_url)
-        with open("Amiri-Regular.ttf", "wb") as f:
-            f.write(font_response.content)
-        font = ImageFont.truetype("Amiri-Regular.ttf", size=80)
+        # إرسال الملف إلى المستخدم
+        with open(file_path, 'rb') as file:
+            if is_audio:
+                await bot.send_audio(message.chat.id, file, caption="🎵 تم تحويل الفيديو إلى صوت!")
+            else:
+                await bot.send_video(message.chat.id, file, caption="🎥 تم تحميل الفيديو بنجاح!")
 
-        def create_text_overlay(text, font, size):
-            overlay = Image.new("RGBA", size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(overlay)
-            text_bbox = draw.textbbox((0, 0), text, font=font)
-            text_width, text_height = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
-            x = (size[0] - text_width) // 2
-            y = (size[1] - text_height) // 2
-            draw.text((x, y), text, font=font, fill="white")
-            return np.array(overlay)
+        # حذف الملف بعد الإرسال
+        os.remove(file_path)
 
-        video_clip = VideoFileClip("background_video.mp4")
-        text_overlay = create_text_overlay(quranic_text, font, video_clip.size)
-        text_clip = ImageClip(text_overlay).set_duration(video_clip.duration)
-
-        final_video = CompositeVideoClip([video_clip, text_clip])
-        final_video = final_video.set_audio(AudioFileClip("quran_recitation.mp3"))
-        final_video.write_videofile("final_video_with_audio.mp4", fps=24)
-
-        st.success("تم إنشاء الفيديو بنجاح!")
-        st.video("final_video_with_audio.mp4")
+    except yt_dlp.utils.DownloadError as e:
+        await message.reply(f"❌ خطأ أثناء التنزيل: {str(e)}")
     except Exception as e:
-        st.error(f"حدث خطأ: {e}")
+        await message.reply(f"⚠️ حدث خطأ غير متوقع: {str(e)}")
+
+# تشغيل البوت
+if __name__ == '__main__':
+    while True:  # الحفاظ على البوت يعمل بشكل مستمر
+        try:
+            keep_alive()  # تشغيل Flask للحفاظ على النشاط
+            executor.start_polling(dp, skip_updates=True)
+        except Exception as e:
+            logging.error(f"⚠️ حدث خطأ أثناء تشغيل البوت: {str(e)}. إعادة التشغيل...")
